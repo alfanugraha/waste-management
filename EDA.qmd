@@ -1,0 +1,240 @@
+---
+title: "EDA RPRS"
+format: html
+editor: source
+---
+
+```{r}
+library(dplyr)
+library(skimr)
+library(DataExplorer)
+library(ggplot2)
+library(ggpubr)
+library(haven)
+library(readr)
+library(lubridate)
+```
+
+
+# Pengolahan Data Sampah di Wilayah Kota Magelang
+
+## Load data
+
+```{r}
+datatimbangan <- read.csv('datatimbangan2019_2023.csv')
+str(datatimbangan)
+```
+
+```{r}
+iklim <- read.csv('iklim.csv')
+iklim$bulan <- rep(1:12, 9)
+iklim$Bulan <- as_factor(iklim$Bulan)
+iklim$Tahun <- as_factor(iklim$Tahun)
+str(iklim)
+```
+
+
+```{r}
+agama <- read.csv('agama.csv')
+agama$tahun_agm <- agama$Tahun
+str(agama)
+```
+
+
+```{r}
+supplier <- read.csv('supplier.csv')
+colnames(supplier)[2] <- 'supplier'
+supplier$No <- NULL
+str(supplier)
+```
+
+```{r}
+luas <- read.csv('luas.csv')
+luas$Tahun <- as_factor(luas$Tahun)
+str(luas)
+```
+
+```{r}
+# step 1: agama, luas, supplier
+# all_data <- merge(agama, luas, by = c("Kecamatan", "Tahun"))
+# all_data <- merge(all_data, iklim, by = c("Kecamatan", "Tahun"))
+# all_data <- merge(all_data, supplier, by = "Kecamatan")
+
+# step 2: merge all_data & datatimbangan = all_data
+# all_data <- merge(all_data, datatimbangan, by="supplier")
+# str(all_data)
+```
+
+```{r}
+# head(all_data)
+```
+
+
+## EDA (Exploratory Data Analysis) 
+
+all insight about data, termasuk jenis data dan informasi general tentang data yang ada
+
+### Jumlah Supplier
+
+```{r}
+freq_tbl <- supplier %>%
+  group_by(Kecamatan) %>%
+  summarize(Freq=n())
+freq_tbl
+```
+
+### Jumlah sampah pada setiap supplier
+
+```{r}
+sampah_by_supplier <- merge(datatimbangan, supplier, by = "supplier")
+sampah_by_supplier$barang <- as_factor(sampah_by_supplier$barang)
+sampah_by_supplier$tahun <- as_factor(sampah_by_supplier$tahun)
+sampah_by_supplier$Kelurahan <- as_factor(sampah_by_supplier$Kelurahan)
+sampah_by_supplier$Kecamatan <- as_factor(sampah_by_supplier$Kecamatan)
+sampah_by_supplier$kabkot <- as_factor(sampah_by_supplier$kabkot)
+sampah_by_supplier$netto_kg <- as.numeric(sampah_by_supplier$netto_kg)
+sampah_by_supplier
+```
+
+```{r}
+# subset the key features and convert date & time into ts format version
+ts_sampah_by_supplier <- sampah_by_supplier %>%
+  select(tanggal, hari, bulan, tahun, barang, netto_kg, jam, Kecamatan)
+ts_sampah_by_supplier <- ts_sampah_by_supplier %>% 
+  filter(barang != 0 & Kecamatan != '-') %>%
+  mutate(net_kg_jt = netto_kg / 1000) %>%
+  mutate(ts_chr = paste0(tahun, "-", bulan, "-", hari, "T", jam, ":00Z"))
+ts_sampah_by_supplier$ts <- as_datetime(ts_sampah_by_supplier$ts_chr) 
+```
+
+### Jumlah sampah / kecamatan / tahun
+
+```{r}
+freq_sampah <- sampah_by_supplier %>%
+  mutate(net_kg_jt = netto_kg / 1000) %>%
+  filter(barang != 0 & Kecamatan != '-') %>%
+  group_by(Kecamatan, barang, tahun) %>%
+  summarize(net_kg_jt = sum(net_kg_jt), n_supplier=n())
+freq_sampah
+```
+
+
+### Plot total sampah per kecamatan berdasarkan jenisnya (dalam Juta Kg)
+
+```{r}
+freq_sampah %>%  ggplot(aes(x = barang, y = net_kg_jt, fill=Kecamatan)) + 
+  geom_col(position = "dodge") #+ 
+  # geom_text(
+  #   aes(label = net_kg_jt),
+  #   colour = "white", size = 3,
+  #   vjust = 1.5, position = position_dodge(.9)
+  # )
+```
+
+### Plot total sampah per kecamatan per tahun berdasarkan jenisnya (dalam Juta Kg)
+
+```{r}
+ggplot(freq_sampah, aes(x = Kecamatan, y = net_kg_jt)) +
+  geom_bar(
+    aes(fill = tahun), stat = "identity", color = "white",
+    position = position_dodge(0.9)
+    ) +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  facet_wrap(~barang) + 
+  fill_palette("jco") 
+```
+
+### Plot total supplier per kecamatan per tahun berdasarkan jenisnya (dalam Juta Kg)
+
+```{r}
+ggplot(freq_sampah, aes(x = Kecamatan, y = n_supplier)) +
+  geom_bar(
+    aes(fill = tahun), stat = "identity", color = "white",
+    position = position_dodge(0.9)
+    ) +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  facet_wrap(~barang) + 
+  fill_palette("jco")
+```
+
+### Plot luas kecamatan per tahun
+
+```{r}
+luas %>%  ggplot(aes(x = Tahun, y = Luas, fill=Kecamatan)) + 
+  geom_col(position = "dodge") + 
+  geom_text(
+    aes(label = Luas),
+    colour = "white", size = 3,
+    vjust = 1.5, position = position_dodge(.9)
+  )
+```
+
+
+### Plot jumlah hari hujan di Kecamatan ... tahun ...
+
+```{r}
+iklim %>% filter(Kecamatan=="Magelang Utara" & Tahun == 2022) %>% 
+  ggplot(aes(x = Bulan, y = Jml_hari_hujan, fill=Bulan)) + 
+  geom_col(position = "dodge") + 
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  geom_text(
+    aes(label = Jml_hari_hujan),
+    colour = "white", size = 3,
+    vjust = 1.5, position = position_dodge(.9)
+  )
+```
+
+
+
+### Trend data dari waktu ke waktu (hari atau bulan)
+
+Observasi waktu tertentu (hari/bulan) untuk melihat tren penambahan jumlah sampah seperti hari besar atau perayaan tertentu yang memberikan sumbangan volume sampah yang signifikan
+
+```{r}
+ts_sampah_by_supplier
+```
+```{r}
+# create a time series plot of the training data
+ts_sampah_by_supplier %>% 
+  filter(between(x = ts, # Kecamatan == 'Magelang Utara' & barang ?
+                 left = ymd_hm("2019-01-01 00:00"),
+                 right = ymd_hm("2019-12-31 00:00"))) %>%
+  ggplot(aes(x = ts, y = net_kg_jt)) +
+  geom_line() + 
+  geom_smooth()
+```
+
+```{r}
+freq_ts_sampah_by_supplier <- ts_sampah_by_supplier %>%
+  group_by(Kecamatan, barang, bulan, tahun) %>%
+  summarize(net_kg_jt = sum(net_kg_jt), n_supplier=n())
+freq_ts_sampah_by_supplier <- freq_ts_sampah_by_supplier %>% 
+  mutate(ts_chr = paste0(tahun, "-", bulan, "-01T"))
+freq_ts_sampah_by_supplier$ts <- as_datetime(freq_ts_sampah_by_supplier$ts_chr) 
+freq_ts_sampah_by_supplier
+```
+
+
+```{r}
+# create a time series plot of the training data
+freq_ts_sampah_by_supplier %>% 
+  filter(Kecamatan == "Magelang Selatan" & barang == "Sampah") %>%
+  # arrange(tahun, bulan) %>%
+  ggplot(aes(x = ts, y = net_kg_jt)) +
+  geom_line() + 
+  geom_smooth()
+```
+
+## Trend data 
+
+sebaran sampah terpilah dan non terpilah yang ada seperti apa yang nanti bisa ditinjau juga based on profil data per wilayah sesuai kategori (luas wilayah, iklim, RT/RW, Curah Hujan, Pekerjaan PNS) *untuk pendidikan, ekonomi menyusul datanya
+
+## Prediksi time series
+
+untuk tahun selanjutnya berdasarkan data timbulan sampah dari tahun 2019 - 2023
+
+## Suggestion
+
+untuk dataset yang ada di folder Data SIPSN Indonesia ini apakah nantinya bisa dikulik juga sebagai pembanding dengan data kota yang ada. (untuk yang case ini masih belum nemu juga sebetulnya nguliknya mau digimanain, barangkali nnti pas cek nemu sesuatu kak hehe)
+
+
